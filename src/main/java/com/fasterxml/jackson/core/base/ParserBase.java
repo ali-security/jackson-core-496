@@ -40,6 +40,11 @@ public abstract class ParserBase extends ParserMinimalBase
     final protected IOContext _ioContext;
 
     /**
+     * @since 2.15
+     */
+    protected final StreamReadConstraints _streamReadConstraints;
+
+    /**
      * Flag that indicates whether parser is closed or not. Gets
      * set when parser is either closed by explicit call
      * ({@link #close}) or when end-of-input is reached.
@@ -237,6 +242,7 @@ public abstract class ParserBase extends ParserMinimalBase
     protected ParserBase(IOContext ctxt, int features) {
         super(features);
         _ioContext = ctxt;
+        _streamReadConstraints = ctxt.streamReadConstraints();
         _textBuffer = ctxt.constructTextBuffer();
         DupDetector dups = Feature.STRICT_DUPLICATE_DETECTION.enabledIn(features)
                 ? DupDetector.rootDetector(this) : null;
@@ -896,10 +902,16 @@ public abstract class ParserBase extends ParserMinimalBase
                     _reportTooLongIntegral(expType, numStr);
                 }
                 if ((expType == NR_DOUBLE) || (expType == NR_FLOAT)) {
+                    if (getMaxNumLen() >= 0 && numStr.length() > getMaxNumLen()) {
+                        throw new NumberFormatException("number length exceeds the max number length of " + getMaxNumLen());
+                    }
                     _numberDouble = NumberInput.parseDouble(numStr);
                     _numTypesValid = NR_DOUBLE;
                 } else {
                     // nope, need the heavy guns... (rare case)
+                    if (getMaxNumLen() >= 0 && numStr.length() > getMaxNumLen()) {
+                        throw new NumberFormatException("number length exceeds the max number length of " + getMaxNumLen());
+                    }
                     _numberBigInt = new BigInteger(numStr);
                     _numTypesValid = NR_BIGINT;
                 }
@@ -930,7 +942,7 @@ public abstract class ParserBase extends ParserMinimalBase
     {
         // First, converting from long ought to be easy
         if ((_numTypesValid & NR_LONG) != 0) {
-            // Let's verify it's lossless conversion by simple roundtrip
+            // Let's verify its lossless conversion by simple roundtrip
             int result = (int) _numberLong;
             if (((long) result) != _numberLong) {
                 reportOverflowInt(getText(), currentToken());
@@ -1039,7 +1051,11 @@ public abstract class ParserBase extends ParserMinimalBase
             /* Let's actually parse from String representation, to avoid
              * rounding errors that non-decimal floating operations could incur
              */
-            _numberBigDecimal = NumberInput.parseBigDecimal(getText());
+            final String numStr = getText();
+            if (getMaxNumLen() >= 0 && numStr.length() > getMaxNumLen()) {
+                throw new NumberFormatException("number length exceeds the max number length of " + getMaxNumLen());
+            }
+            _numberBigDecimal = NumberInput.parseBigDecimal(numStr);
         } else if ((_numTypesValid & NR_BIGINT) != 0) {
             _numberBigDecimal = new BigDecimal(_numberBigInt);
         } else if ((_numTypesValid & NR_LONG) != 0) {
@@ -1259,4 +1275,17 @@ public abstract class ParserBase extends ParserMinimalBase
 
     // Can't declare as deprecated, for now, but shouldn't be needed
     protected void _finishString() throws IOException { }
+    protected int getMaxNumLen() {
+        return _ioContext.streamReadConstraints().getMaxNumberLength();
+    }
+
+    protected final void createChildArrayContext(final int lineNr, final int colNr) throws IOException {
+        _parsingContext = _parsingContext.createChildArrayContext(lineNr, colNr);
+        _streamReadConstraints.validateNestingDepth(_parsingContext.getNestingDepth());
+    }
+
+    protected final void createChildObjectContext(final int lineNr, final int colNr) throws IOException {
+        _parsingContext = _parsingContext.createChildObjectContext(lineNr, colNr);
+        _streamReadConstraints.validateNestingDepth(_parsingContext.getNestingDepth());
+    }
 }
